@@ -1,0 +1,123 @@
+#pragma kernel Kernel1
+
+#include "/Includes/OctreeUtils.compute"
+#include "/Includes/MeshImporter.compute"
+
+AppendStructuredBuffer<Voxel> voxels;
+//RWStructuredBuffer<VertUVs> vert_uvs;
+RWStructuredBuffer<float3> vertices;
+RWStructuredBuffer<float2> uvs;
+RWTexture2D<float4> _Texture;
+
+RWStructuredBuffer<int> triangles;
+int triangleCount;
+
+RWStructuredBuffer<uint> calcIndex;
+
+RWStructuredBuffer<int> finishedCount;
+float2 textureSize;
+
+float density;
+float3 coord;
+
+float4 currentMatColor;
+bool materialMode;
+bool noUV;
+
+float Get_TriangleSize(float3 a, float3 b, float3 c)
+{
+    float3 x1 = b - a;
+    float3 x2 = c - a;
+
+    return length(cross(x1, x2)) * 0.5;
+    
+    /*sqrt(pow(x1.y * x2.z - x2.y * x1.z, 2) +
+                pow(x1.z * x2.x - x2.z * x1.x, 2) +
+                pow(x1.x * x2.y - x2.x * x1.y, 2)) * 0.5;*/
+}
+
+void IntersectTriangle(int index_triangle)
+{
+    if (index_triangle >= triangleCount) return;
+    uint index = index_triangle * 3;
+    int idx_a = triangles[index];
+    int idx_b = triangles[index + 1];
+    int idx_c = triangles[index + 2];
+    bool intersects = false;
+    Triangle tri;
+
+    //VertUVs vu_a = vert_uvs[idx_a];
+    //VertUVs vu_b = vert_uvs[idx_b];
+    //VertUVs vu_c = vert_uvs[idx_c];
+
+    float2 uv_a = 0; 
+    float2 uv_b = 0;
+    float2 uv_c = 0;
+
+    if (!noUV)
+    {
+        uv_a = uvs[idx_a];
+        uv_b = uvs[idx_b];
+        uv_c = uvs[idx_c];
+    }
+
+    tri.a = (vertices[idx_a] + coord) * density;//vu_a.vert;
+    tri.b = (vertices[idx_b] + coord) * density;
+    tri.c = (vertices[idx_c] + coord) * density;
+
+
+    float3 minPoint = float3(min(min(tri.a.x, tri.b.x), tri.c.x), min(min(tri.a.y, tri.b.y), tri.c.y), min(min(tri.a.z, tri.b.z), tri.c.z)) - 1;
+    float3 maxPoint = float3(max(max(tri.a.x, tri.b.x), tri.c.x), max(max(tri.a.y, tri.b.y), tri.c.y), max(max(tri.a.z, tri.b.z), tri.c.z)) + 1;
+
+    uint3 m = (uint3)maxPoint - (uint3)minPoint +1;
+    uint idxLength = m.x * m.y * m.z;
+
+
+    index = calcIndex[index_triangle];
+    if (index > idxLength) return;
+    int calculateCnt = 4000;
+
+    for (; index <= idxLength && calculateCnt >= 0; index++)
+    {
+        calculateCnt--;
+        uint x = index / (uint)(m.y * m.z) + (uint)minPoint.x;
+        uint y = (index % (uint)(m.y * m.z)) / m.z + (uint)minPoint.y;
+        uint z = index % (uint)m.z + (uint)minPoint.z;
+
+        AABB aabb;
+        aabb.center = float3(x, y, z);
+        aabb.extents = 0.5;
+
+        intersects = IntersectsTriangleAabb(tri, aabb);
+        if (intersects)
+        {
+            Voxel voxel;
+            voxel.position = uint2((x << 16) + y, z);//half4((half)x, (half)y, (half)z, 0);//uint3(x, y, z);
+            if (materialMode)
+            {
+                voxel.color = ColorToInt(currentMatColor);
+            }
+            else
+            {
+                float abp = Get_TriangleSize(tri.a, tri.b, aabb.center);
+                float bcp = Get_TriangleSize(tri.b, tri.c, aabb.center);
+                float acp = Get_TriangleSize(tri.a, tri.c, aabb.center);
+                float abc = abp + bcp + acp;
+                float2 uv_p = (uv_a * bcp + uv_b * acp + uv_c * abp) / abc;
+                int2 xy = int2((int)((textureSize.x - 1) * uv_p.x), (int)((textureSize.y - 1) * uv_p.y));
+
+                //voxel.color = ColorToInt(float4(normal, 1));//ColorToInt(_Texture[xy]);
+                voxel.color = ColorToInt(_Texture[xy]);
+            }
+            voxels.Append(voxel);
+        }
+    }
+    calcIndex[index_triangle] = index;
+    if (index > idxLength) InterlockedAdd(finishedCount[0], 1);
+}
+
+[numthreads(512,1,1)]
+void Kernel1(uint3 id : SV_DispatchThreadID)
+{
+    IntersectTriangle(id.x);
+}

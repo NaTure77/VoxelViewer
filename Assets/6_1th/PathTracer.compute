@@ -1,0 +1,562 @@
+﻿#pragma kernel Kernel2
+#pragma kernel Kernel3
+#pragma kernel Focus
+RWStructuredBuffer<uint> seeds;
+
+#include "/Includes/OctreeUtils.compute"
+#include "/Includes/Random.compute"
+
+uint MAX_STEPS = 250;
+float MAP_SIZE = 1024;
+
+struct ray_record
+{
+    float3 origin_first;       //traced point
+    float3 origin;       //traced point
+    float3 direction_first;
+    float3 direction;
+    float3 albedo;
+    bool hit;
+    bool hitLight;
+};
+
+struct trav_data
+{
+    float3 voxelPos; // 현재 위치한 voxel의 중앙좌표
+    float3 ta;
+    uint childNum; // 현재 위치한 voxel에서 내 위치의 구역번호
+    uint octreeIdx;
+};
+
+struct DataNode
+{
+    uint subNodes[8];
+};
+
+int voxelLevel = 0;
+bool lightEnabled;
+bool gridEnabled;
+bool showOctree;
+bool addBlock;
+bool delBlock;
+bool updated;
+bool rtxOn;
+
+bool focusing;
+
+float3 lightColor;
+float3 lightDirection;
+float lightIntensity;
+
+float3 _Position;
+float3 _Rotation;
+float2 resolution;
+float2 screenCenter;
+
+float3 randNum;
+float4 blockColor;
+float fuzz;
+float lens_radius;
+float focus_dist;
+float2 randomVector;
+
+float3 skyColor;// = float3(0.7f, 0.8f, 1.0f);
+float3 groundColor;// = float3(0.339, 0.172, 0);
+int materialType; //0: lambertian, 1: metal
+
+float viewport_height;
+
+float3 childDirection[8];
+
+RWTexture2D<float4> Result;
+RWStructuredBuffer<DataNode> octree;
+
+
+RWStructuredBuffer<ray_record> recs;
+RWStructuredBuffer<float3> color_sum;
+RWStructuredBuffer<uint2> traced_cnt;
+RWStructuredBuffer<float3> focus_pos;
+
+bool DrawGrid(float3 localPos, float scale, float thick)
+{
+    scale = scale * 0.5 - thick;
+    localPos = abs(localPos);
+    bool x = scale < localPos.x;
+    bool y = scale < localPos.y;
+    bool z = scale < localPos.z;
+    return x && y || y && z || x && z;
+}
+bool DrawGrid2(float3 localPos, float scale, float dist, float thick)
+{
+    float thickness = dist * thick;
+    scale = scale * 0.5 - thickness;
+    bool x = scale <= abs(localPos.x);
+    bool y = scale <= abs(localPos.y);
+    bool z = scale <= abs(localPos.z);
+    return x && y || y && z || x && z;
+}
+float3 get_skyColor(float3 rd)
+{
+    float t = 0.5 * (rd.y + 1);
+    return (1.0 - t) * groundColor + t * skyColor;
+}
+float3 GetChildPos(int idx, float3 parentPos, float scale)
+{
+    return childDirection[idx] * scale * 0.25 + parentPos;
+}
+
+float3 VoxelTrav(inout ray_record rec)
+{
+    float3 ro = rec.origin;
+    float3 rd = rec.direction;
+    float3 rd_reverse = 1/rd;
+    float3 absRd = abs(rd_reverse);
+    const int maxLevel = log2(MAP_SIZE);
+    float3 direction = sign(rd);
+
+    int scale = MAP_SIZE;
+
+    int level = maxLevel - 1;
+
+    trav_data stack[12];
+    trav_data trav;
+    trav.voxelPos = scale * 0.5;
+    trav.childNum = GetChildNum(trav.voxelPos, rec.origin);
+    trav.octreeIdx = 0u;
+    trav.ta = ((direction + childDirection[trav.childNum]) * scale * 0.25 + trav.voxelPos - ro) * rd_reverse;
+
+    // 중앙점 기준 rd 방향으로 더 움직일 때 만날 수 있는 축마다의 표면까지 거리를 rd로 나눔.
+    uint subNode;
+    uint count = 0;
+
+    float3 octreeColor = 0;
+    float anD[3] = { 0,0,0 };
+    int axisIdx = 0;
+    float3 dd = abs(ro - MAP_SIZE / 2);
+
+    axisIdx = step(dd.x, dd.y);
+    axisIdx = step(dd[axisIdx], dd.z) * (2 - axisIdx) + axisIdx;
+
+    rec.hit = false;
+    while (count++ < MAX_STEPS)
+    {
+        subNode = octree[trav.octreeIdx].subNodes[trav.childNum];
+
+        // 선택된 공간에 데이터가 있을 경우
+        if(subNode != 0)
+        {
+            // 마지막 레벨일 경우.
+            if (level <= voxelLevel)
+            {
+                rec.hit = true;
+                break;
+            }
+
+            // 마지막 레벨이 아니면 다음 레벨로 이동. 
+            // voxel 크기가 반으로 줄음. 이동 거리가 줄어듦.
+            else
+            {
+                //이전 레벨 데이터 백업
+                stack[level--] = trav;
+
+                //레벨에 맞게 변수들 새로 계산
+                trav.voxelPos = GetChildPos(trav.childNum, trav.voxelPos, scale);
+                trav.octreeIdx = subNode;
+                trav.childNum = GetChildNum(trav.voxelPos, rec.origin); //0;
+
+                //target 초기화.
+                scale *= 0.5;
+                trav.ta = ((direction + childDirection[trav.childNum]) * scale * 0.25 + trav.voxelPos - ro) * rd_reverse;
+
+                //옥트리 그리드 그리기
+                octreeColor.yz += 0.01;
+                octreeColor.xy += 0.06 * DrawGrid2(rec.origin - trav.voxelPos, scale, length(rec.origin - _Position), 0.002);
+                continue;
+            }
+        }
+        anD[axisIdx] = 0;
+        axisIdx = step(trav.ta.y, trav.ta.x);
+        axisIdx = step(trav.ta.z, trav.ta[axisIdx]) * (2 - axisIdx) + axisIdx;
+        rec.origin = ro + rd * trav.ta[axisIdx];
+       
+
+        //선택된 공간에 아무 데이터가 없을 경우 다음 칸으로 이동(voxel trav 알고리즘 사용)
+        //더이상 진행이 불가하면 상위 레벨로 이동.
+        //더이상 돌아갈 레벨이 없으면 맵의 가장자리에 도달한 것.
+        //해당하는 자식 인덱스의 비트가 켜져 있고 direction이 양수거나 비트 꺼져있고 음수이면 진행 못함.
+        //현재 블록 위치에서 같은 레벨상에서 axisIdx 축 방향으로 이동할 수 있으려면 블록 로컬 좌표의 axisIdx 축과 direction의 axisIdx 축 부호가 달라야 함.
+        if (childDirection[trav.childNum][axisIdx] * direction[axisIdx] >= 0) 
+        {
+            while (++level < maxLevel && childDirection[stack[level].childNum][axisIdx] * direction[axisIdx] >= 0);
+            if (level >= maxLevel) break;
+            //레벨 데이터 복원
+            trav = stack[level];
+            
+        }
+        scale = pow(2, level + 1);
+        anD[axisIdx] = absRd[axisIdx] * scale * 0.5;
+        trav.ta += (float3)anD;
+        trav.childNum ^= (uint)pow(2 ,2 - axisIdx);
+    }
+
+    //get surface normal
+    anD[axisIdx] = direction[axisIdx];
+    //rec.direction = IntToColor(subNode) * 2 - 1;
+    rec.direction = -(float3)anD;//-normalize((float3)anD);
+
+    if (rec.hit)
+    {
+        return IntToColor(subNode).xyz;
+    }
+
+    else return octreeColor * showOctree;
+}
+
+//https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-box-intersection
+bool ray_box_intersection(inout float3 ro, float3 rd)
+{
+    //drawLine = false;
+    if (any(ro < 0) || any(ro >= MAP_SIZE))
+    {
+        float3 s = rd > 0;
+        float3 t0 = (MAP_SIZE * (1 - s) - ro) / rd;
+        float3 t1 = (MAP_SIZE * s - ro) / rd;
+
+        if (t0.x > t1.y || t0.y > t1.x)
+        {
+            return false;
+        }
+        float tmin = max(t0.x, t0.y);
+        float tmax = min(t1.x, t1.y);
+        if (tmin > t1.z || t0.z > tmax)
+        {
+            return false;
+        }
+
+        tmin = max(tmin, t0.z);
+        tmax = min(tmax, t1.z);
+
+        if (tmin > 0)
+        {
+            ro = ro + rd * tmin;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+float3 Draw_Sun(float3 rd)
+{
+    float3 lightDir = normalize(lightDirection);
+    float ratio = clamp(dot(lightDir, rd), 0, 1);/* > 0.5*/
+    float3 skyColor = get_skyColor(rd);
+
+    return (ratio > 0.7) * ratio * lightColor * lightEnabled * lightIntensity + skyColor;
+}
+float3 Draw_Sun_fake(float3 rd)
+{
+    float3 lightDir = normalize(lightDirection);
+    float ratio = clamp(dot(lightDir, rd), 0, 1);/* > 0.5*/
+    float3 skyColor = get_skyColor(rd);
+
+    return (ratio > 0.99) * ratio * lightColor * lightEnabled * lightIntensity + skyColor;
+}
+bool In_shadowField(float3 ro, float3 lightDir)
+{
+    ray_record rec2;
+    rec2.hit = false;
+    rec2.hitLight = false;
+    rec2.albedo = 1;
+    rec2.direction = -lightDir;
+    rec2.origin_first = 0;
+    rec2.direction_first = 0;
+    rec2.origin = ro + lightDir * 100000;//rec2.direction * 0.01;
+    ray_box_intersection(rec2.origin, rec2.direction);
+
+    VoxelTrav(rec2);
+
+    return length(ro - rec2.origin) > 0.005;
+}
+void handle_material(inout ray_record rec, float4 albedo, float3 rd, uint2 tracedCnt, inout uint seed)
+{
+    if (gridEnabled && rec.hit)
+    {
+        float dist = length(rec.origin - _Position);
+        float ratio = clamp((1 - dist * 3 / (MAP_SIZE)), 0, 1);
+        float3 localPos = rec.origin - floor(rec.origin - rec.direction * 0.01) - 0.5;
+        int scale = pow(2, voxelLevel);
+        albedo.xyz += (1 - albedo.xyz * 2) * 1 * DrawGrid(localPos, 1, 0.02);
+    }
+    if (!rec.hit)
+    {
+       
+        //첫 trace 시 아무것도 부딛히지 않음.
+        if (tracedCnt.x == 0)
+        {
+            albedo.xyz += Draw_Sun_fake(rd); //albedo = octree color
+            rec.albedo *= albedo.xyz;
+            int halfMapSize = MAP_SIZE * 0.5;
+            rec.albedo += (1 - rec.albedo * 2) * DrawGrid2(rec.origin % halfMapSize - halfMapSize * 0.5, halfMapSize, length(rec.origin - _Position), 0.003) * gridEnabled;
+        }
+        else
+        {
+            albedo.xyz += Draw_Sun(rd); //albedo = octree color
+            rec.albedo *= albedo.xyz;
+        }
+        return;
+    }
+    rec.albedo *= albedo.xyz;
+    rec.origin += rec.direction * 0.01;
+    /************light************/
+   /* if (albedo.a == 0.4f && !gridHit)
+    {
+        rec.hit = false;
+        return;
+    }*/
+    /**************metal*************/
+    if (/*albedo.a == 0.6 ||*/ materialType == 1)
+    {
+        float3 reflect = rd - 2 * dot(rd, rec.direction) * rec.direction;
+        float3 scattered = reflect + fuzz * (random_in_unit_sphere(seed));
+
+        if (dot(scattered, rec.direction) <= 0)
+        {
+            rec.albedo = 0;
+            rec.hit = false;
+            return;
+        }
+        else rec.direction = scattered;
+        //rec.direction = reflect;
+    }
+    /*******lambertian*********/
+    else
+    {
+        float3 normal = rec.direction + normalize(random_in_unit_sphere(seed));
+        float s = 1e-4;
+        if (all(abs(rd) < s)) normal = rec.direction;
+        rec.direction = normalize(normal);
+    }
+
+    bool firstHitAndShadow = false;
+    if ((lightEnabled) && tracedCnt.x == 0)
+    {
+        float3 lightDir = normalize(lightDirection + random_in_unit_sphere(seed) * 0.02);
+        if (!In_shadowField(rec.origin_first, lightDir))
+        {
+            rec.hit = false;
+            float brightness = clamp(dot(rec.direction, lightDir), 0, 1) * lightIntensity;
+            rec.albedo *= get_skyColor(rec.direction) + brightness * lightColor * 2;
+        }
+        else firstHitAndShadow = tracedCnt.x == 0;
+    }
+
+    if (any(rec.origin < 0) || any(rec.origin >= MAP_SIZE))
+    {
+        if (firstHitAndShadow || !lightEnabled)
+        {
+            rec.albedo *= Draw_Sun(rec.direction);
+            //rec.albedo *= get_skyColor(rec.direction);
+        }
+        
+        rec.hit = false;
+        return;
+    }
+}
+float3 rotate(float3 p, float3 a)
+{
+    float sx, cx, sy, cy;
+    sincos(a.x, sx, cx);
+    sincos(-a.y, sy, cy);
+    p = float3(p.x, p.y * cx - p.z * sx, p.y * sx + p.z * cx);
+    p = float3(p.x * cy - p.z * sy, p.y, p.x * sy + p.z * cy);
+    return p;
+}
+
+
+[numthreads(8, 8, 1)]
+void Kernel2(int3 id : SV_DispatchThreadID)
+{
+    int idx1D = id.y * resolution.x + id.x;
+    
+    float3 ro;
+    float3 rd;
+    if (updated)
+    {
+        float2 uv = (id.xy / resolution) - 0.5;
+        ro = _Position;
+        rd = rotate(normalize(float3(uv.x * resolution.x / resolution.y, uv.y, 1 / viewport_height)), _Rotation);
+    }
+    else
+    {
+        float3 rot_f = rotate(float3(0, 0, 1), _Rotation);
+        float3 rot_v = rotate(float3(0, 1, 0), _Rotation);
+        float3 u = normalize(cross(rot_v, rot_f));
+        float3 v = normalize(cross(rot_f, u));
+        float3 horizontal = u * (resolution.x / resolution.y) * viewport_height;
+        float3 vertical =  v * viewport_height;
+        float2 uv = ((id.xy + randomVector - 0.5) / (resolution)) - 0.5;
+        ro = _Position;
+        rd = normalize(uv.x * horizontal + uv.y * vertical + rot_f);
+    }
+    float4 result;
+    ray_record rec;
+    rec.origin = -1;
+    rec.direction = rd;
+    rec.albedo = 1;
+    rec.hit = false;
+    rec.hitLight = false;
+    rec.origin_first = -1;
+    rec.direction_first = rd;
+
+    //범위 바깥 검사.
+    if (!ray_box_intersection(ro, rd))
+    {
+        rec.albedo = Draw_Sun_fake(rd);
+    }
+    else
+    {
+        rec.origin = ro;
+        float3 color = VoxelTrav(rec);
+        if (rec.hit)
+        {
+            rec.albedo = color;
+            float3 lightDir = lightDirection;
+            //if(lightEnabled) rec.albedo *= (0.4 + 0.6 * clamp(dot(rec.direction, normalize(lightDir)), 0, 1));
+            if (lightEnabled) rec.albedo *= get_skyColor(rd) + clamp(dot(rec.direction, normalize(lightDir)), 0, 1) * lightColor;
+        }
+        else
+        {
+            bool gridHit = false;
+            rec.albedo = color + Draw_Sun_fake(rd);
+
+            int halfMapSize = MAP_SIZE * 0.5;
+            gridHit = DrawGrid2(rec.origin % halfMapSize - halfMapSize * 0.5, halfMapSize, length(rec.origin - _Position), 0.003);
+
+            rec.albedo += (1 - rec.albedo * 2) * 1 * gridHit * abs(dot(normalize(_Position - rec.origin), rec.direction));
+        }
+        /*if (gridEnabled)
+        {
+            bool gridHit = false;
+            if (rec.hit) gridHit = DrawGrid(frac(rec.origin) - 0.5, 1, 0.02);
+            else gridHit = DrawGrid2(rec.origin % 128 - 64, 128, length(rec.origin - _Position), 0.003);
+
+            rec.albedo += (1 - rec.albedo * 2) * 1 * gridHit;
+        }*/
+    }
+    if (any(rec.albedo > 1))
+    {
+        rec.albedo *= 1 / max(rec.albedo.x, max(rec.albedo.y, rec.albedo.z));
+    }
+    result = float4(sqrt(rec.albedo), 1);
+    rec.origin_first = rec.origin;
+    rec.direction_first = rec.direction;
+    recs[idx1D] = rec;
+    Result[id.xy] = result;
+}
+void Init_rec(int3 id, inout uint seed, inout ray_record rec)
+{
+    int i = updated ? 2 : 0;
+    int idx1D = id.y * resolution.x + id.x;
+
+    float3 rot_f = rotate(float3(0, 0, 1), _Rotation);
+    float3 rot_v = rotate(float3(0, 1, 0), _Rotation);
+    float3 u = normalize(cross(rot_v, rot_f));
+    float3 v = normalize(cross(rot_f, u));
+    float3 f_dist = focus_dist * viewport_height;
+    float3 horizontal = f_dist * u * (resolution.x / resolution.y);
+    float3 vertical = f_dist * v;
+    float2 rrd = lens_radius * random_in_unit_disk2(seed);
+    float3 offs = rrd.x * u + rrd.y * v;
+    float2 uv = ((id.xy + float2(nextRandom(seed), nextRandom(seed)) - 0.5) / (resolution - 1)) - 0.5;
+    float3 ro = _Position + offs;
+    float3 rd = normalize(uv.x * horizontal + uv.y * vertical + f_dist / viewport_height * rot_f - offs);
+
+    rec.albedo = 1;
+    rec.origin = ro;
+    rec.direction = rd;
+    rec.hit = false;
+    rec.hitLight = false;
+}
+[numthreads(8, 8, 1)]
+void Kernel3(int3 id : SV_DispatchThreadID)
+{
+    int idx1D = id.y * resolution.x + id.x;
+    ray_record rec = recs[idx1D];
+    uint2 tracedCnt = 0; 
+    float3 colorSum = 0; 
+    uint seed = seeds[idx1D];
+
+    float3 albedo = 0;
+    float4 result;
+    uint color = 0;
+    float3 direction_bef = 0;
+
+    bool intersected = true;
+    if (!updated)
+    {
+        colorSum = color_sum[idx1D];
+        tracedCnt = traced_cnt[idx1D];
+    }
+    if (tracedCnt.x == 0)
+    {
+        if (tracedCnt.y == 0)
+            seed = uint(uint(id.x) * uint(1973) + uint(id.y) * uint(9277)) | uint(1);
+        Init_rec(id, seed, rec);
+        intersected = ray_box_intersection(rec.origin, rec.direction);
+    }
+    if (!intersected)
+    {
+        rec.hit = false;
+        rec.albedo = Draw_Sun_fake(rec.direction);
+    }
+    else
+    {
+        direction_bef = rec.direction;
+        albedo = VoxelTrav(rec);
+
+        if (tracedCnt.x == 0)
+        {
+            rec.origin_first = rec.origin;
+            rec.direction_first = rec.direction;
+        }
+        handle_material(rec, float4(albedo, 0), direction_bef, tracedCnt, seed);
+    }
+    tracedCnt.x++;
+
+    //hit 된 것이 없거나 깊이50을 넘어가거나 범위를 넘어갔을 경우.
+    if (!rec.hit || tracedCnt.x > 2)
+    {
+        tracedCnt.x = 0;
+        tracedCnt.y += 1;
+        if (any(rec.albedo > 1))
+        {
+            rec.albedo *= 1 / max(rec.albedo.x, max(rec.albedo.y, rec.albedo.z));
+        }
+
+        colorSum += clamp(rec.albedo, 0, 1) * !rec.hit;
+        rec.albedo = 1;
+    }
+
+    // accumulated results
+    if (tracedCnt.y > 0)
+        result = float4(sqrt(colorSum / tracedCnt.y), 1);
+
+    recs[idx1D] = rec;
+    traced_cnt[idx1D] = tracedCnt;
+    color_sum[idx1D] = colorSum;
+    seeds[idx1D] = seed;
+    Result[id.xy] = result;
+}
+
+
+//auto focusing
+[numthreads(1, 1, 1)]
+void Focus(uint3 id : SV_DispatchThreadID)
+{
+    ray_record rec = recs[screenCenter.y * resolution.x + screenCenter.x];
+    focus_pos[0] = rec.origin_first;
+}
+

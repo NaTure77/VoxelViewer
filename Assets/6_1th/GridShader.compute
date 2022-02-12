@@ -1,0 +1,65 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel Kernel1
+#define MAP_SIZE 256
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+struct ray_record
+{
+    float3 origin_first;       //traced point
+    float3 origin;       //traced point
+    float3 direction_first;
+    float3 direction;
+    float3 albedo;
+    bool hit;
+    bool hitLight;
+};
+RWTexture2D<float4> Result;
+RWStructuredBuffer<ray_record> recs;
+float2 resolution;
+float3 _Position;
+bool gridEnabled;
+
+float3 DrawGrid_new(uint2 id, ray_record rec)
+{
+    int colorCount = 1;
+    int checkSize = 1;
+    float3 colorSum = 0;
+    float3 blockPos = floor(rec.origin_first + rec.direction_first * 0.01) + 0.5;
+
+    for (int x = -checkSize; x <= checkSize; x++)
+        for (int y = -checkSize; y <= checkSize; y++)
+        {
+            int2 p = id + int2(x, y);
+            if (any(p < 0) || any(p >= resolution)) continue;
+            int idx1D = p.y * resolution.x + p.x;
+            ray_record rec2 = recs[idx1D];
+            float3 blockPos2 = floor(rec2.origin_first + rec2.direction_first * 0.01) + 0.5;
+
+            if ((!rec2.hit || gridEnabled) && (any(blockPos != blockPos2) || any(rec.direction_first != rec2.direction_first)))
+            {
+                colorCount++;
+                float3 direction = rec2.origin_first - _Position;
+                float dist = length(direction);
+                colorSum += 1 * clamp(1 - dist / 80, 0, 1) * abs(dot(normalize(direction), rec2.direction_first));// Image[p];
+            }
+        }
+
+    return colorSum / colorCount;//float4(colorSum / colorCount, 1);
+}
+
+[numthreads(8,8,1)]
+void Kernel1(uint3 id : SV_DispatchThreadID)
+{
+    int idx1D = id.y * resolution.x + id.x;
+    ray_record rec = recs[idx1D];
+    bool gridHit;
+    float3 blockPos = floor(rec.origin_first + rec.direction_first * 0.01) + 0.5;
+
+    float3 result = Result[id.xy].xyz;
+    //0 ~ 255 이내
+    if (rec.origin_first.x != -1)
+    {
+        result += DrawGrid_new(id.xy, rec) * (!rec.hit || gridEnabled);
+    }
+    Result[id.xy] = float4(result, 1);
+}

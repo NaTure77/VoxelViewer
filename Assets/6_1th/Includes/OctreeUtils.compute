@@ -1,0 +1,63 @@
+﻿struct BufferBox
+{
+    uint segment[16];
+};
+
+uint GetChildNum(float3 voxelPos, float3 currentPos)
+{
+    uint idx = 0u;
+    if (voxelPos.x <= currentPos.x) idx |= 4;
+    if (voxelPos.y <= currentPos.y) idx |= 2;
+    if (voxelPos.z <= currentPos.z) idx |= 1;
+
+    //0 ~ 7
+    return idx;
+}
+uint GetParentIndex(uint myIndex)
+{
+    return floor((myIndex - 1) / 8);
+}
+
+uint GetChildIndex(uint myIndex, uint childNumber)
+{
+    return (myIndex) * 8u + childNumber + 1u;
+}
+
+uint GetMyIndex(uint myIndex, uint parentIdx)
+{
+    return myIndex - parentIdx * 8 - 1;
+}
+uint2 GetIdx2D(uint x, uint y, uint z)
+{
+    uint cellNum_col = y / 16;
+    uint cellNum_row = y % 16;
+
+    uint x2 = x + cellNum_row * 256;
+    uint y2 = z + cellNum_col * 256;
+
+    return uint2(x2, y2);
+}
+
+uint ColorToInt(float4 color)
+{
+    uint result = (uint)(color.r * 255);
+    result <<= 8;
+    result |= (uint)(color.g * 255);
+    result <<= 8;
+    result |= (uint)(color.b * 255);
+    result <<= 8;
+    result |= (uint)(color.a * 255);
+    return result;
+}
+
+float4 IntToColor(int colorData)
+{
+    float a = colorData & 255;
+    colorData >>= 8;
+    float b = colorData & 255;
+    colorData >>= 8;
+    float g = colorData & 255;
+    colorData >>= 8;
+    float r = colorData & 255;
+    return float4(r, g, b, a) / 255;
+}

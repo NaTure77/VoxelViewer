@@ -1,0 +1,36 @@
+//https://scahp.tistory.com/77
+#pragma kernel CSMain
+
+RWTexture2D<float4> history;
+RWTexture2D<float4> current;
+
+float2 resolution;
+
+bool updated;
+
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    float3 currentColor = current[id.xy].xyz;
+    //if (!updated)
+    {
+        float3 historyColor = history[id.xy].xyz;
+        float3 NearColor0 = current[clamp(id.xy + int2(1, 0), 0, resolution)].xyz;
+        float3 NearColor1 = current[clamp(id.xy + int2(0, 1), 0, resolution)].xyz;
+        float3 NearColor2 = current[clamp(id.xy + int2(-1, 0), 0, resolution)].xyz;
+        float3 NearColor3 = current[clamp(id.xy + int2(0, -1), 0, resolution)].xyz;
+
+        float3 BoxMin = min(currentColor, min(NearColor0, min(NearColor1, min(NearColor2, NearColor3))));
+        float3 BoxMax = max(currentColor, max(NearColor0, max(NearColor1, max(NearColor2, NearColor3))));
+
+        historyColor = clamp(historyColor, BoxMin, BoxMax);
+
+        if (!updated)
+        {
+            currentColor = lerp(currentColor, historyColor, 0.9);
+            current[id.xy] = float4(currentColor, 1);
+        }
+        else currentColor = lerp(currentColor, historyColor, 0.3);
+    }
+    history[id.xy] = float4(currentColor,1);
+}

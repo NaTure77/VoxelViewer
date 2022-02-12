@@ -1,0 +1,89 @@
+void random(inout uint s)
+{
+    s ^= 2747636419u;
+    s *= 2654435769u;
+    s ^= s >> 16;
+    s *= 2654435769u;
+    s ^= s >> 16;
+    s *= 2654435769u;
+}
+
+float nextRandom(inout uint seed)
+{
+    random(seed);
+    return float(seed) / 4294967295.0;
+}
+
+float uintTofloat(uint s)
+{
+    return float(s) / 4294967295.0;
+}
+float3 random_in_unit_sphere(inout uint seed)
+{
+    float3 p;
+    while (true)
+    {
+        float x = nextRandom(seed);
+        float y = nextRandom(seed);
+        float z = nextRandom(seed);
+
+        p = float3(x, y, z) * 2 - 1;
+
+        if (length(p) >= 1)
+        {
+            continue;
+        }
+        return p;
+    }
+    return 0;
+
+}
+
+float3 random_in_unit_vector(inout uint seed)
+{
+    return normalize(random_in_unit_sphere(seed));
+}
+
+
+float2 random_in_unit_disk(inout uint seed)
+{
+    float2 p;
+    while (true)
+    {
+        float x = nextRandom(seed);
+        float y = nextRandom(seed);
+
+        p = float2(x, y) * 2 - 1;
+        if (length(p) >= 1)
+        {
+            continue;
+        }
+        return p;
+    }
+    return 0;
+}
+
+float3 random_in_unit_sphere2(inout uint state)
+{
+    float z = nextRandom(state) * 2 - 1;
+    float a = nextRandom(state) * 3.141592 * 2.0f;
+    float r = sqrt(1.0f - z * z);
+    float x = r * cos(a);
+    float y = r * sin(a);
+    return float3(x, y, z);
+}
+float3 random_in_unit_vector2(inout uint state)
+{
+
+    return normalize(random_in_unit_sphere2(state));
+}
+
+float2 random_in_unit_disk2(inout uint state)
+{
+    float z = nextRandom(state) * 2 - 1;
+    float a = nextRandom(state) * 3.141592 * 2.0f;
+    float r = sqrt(1.0f - z * z);
+    float x = r * cos(a);
+    float y = r * sin(a);
+    return float2(x, y);
+}
