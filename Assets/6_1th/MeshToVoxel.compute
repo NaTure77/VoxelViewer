@@ -61,13 +61,13 @@ void IntersectTriangle(int index_triangle)
         uv_c = uvs[idx_c];
     }
 
-    tri.a = (vertices[idx_a] + coord) * density;//vu_a.vert;
+    tri.a = (vertices[idx_a] + coord) * density;
     tri.b = (vertices[idx_b] + coord) * density;
     tri.c = (vertices[idx_c] + coord) * density;
 
 
-    float3 minPoint = float3(min(min(tri.a.x, tri.b.x), tri.c.x), min(min(tri.a.y, tri.b.y), tri.c.y), min(min(tri.a.z, tri.b.z), tri.c.z)) - 1;
-    float3 maxPoint = float3(max(max(tri.a.x, tri.b.x), tri.c.x), max(max(tri.a.y, tri.b.y), tri.c.y), max(max(tri.a.z, tri.b.z), tri.c.z)) + 1;
+    float3 minPoint = min(tri.a, min(tri.b, tri.c)) - 1;
+    float3 maxPoint = max(tri.a, max(tri.b, tri.c)) + 1;
 
     uint3 m = (uint3)maxPoint - (uint3)minPoint +1;
     uint idxLength = m.x * m.y * m.z;
@@ -75,7 +75,7 @@ void IntersectTriangle(int index_triangle)
 
     index = calcIndex[index_triangle];
     if (index > idxLength) return;
-    int calculateCnt = 4000;
+    int calculateCnt = 400000;
 
     for (; index <= idxLength && calculateCnt >= 0; index++)
     {
@@ -92,7 +92,7 @@ void IntersectTriangle(int index_triangle)
         if (intersects)
         {
             Voxel voxel;
-            voxel.position = uint2((x << 16) + y, z);//half4((half)x, (half)y, (half)z, 0);//uint3(x, y, z);
+            voxel.position = uint2((x << 16) + y, z);
             if (materialMode)
             {
                 voxel.color = ColorToInt(currentMatColor);

@@ -300,7 +300,9 @@ namespace Generation_6_1
                         Mathf.CeilToInt(1.0f * resolution.x / 8),
                         Mathf.CeilToInt(1.0f * resolution.y / 8), 1);
                 }
-
+                temporalAA.Dispatch(KernelID_taa,
+                    Mathf.CeilToInt(1.0f * resolution.x / 8),
+                    Mathf.CeilToInt(1.0f * resolution.y / 8), 1);
             }
 
 
