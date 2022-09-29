@@ -16,6 +16,7 @@ namespace Generation_6_1
         RenderTexture renderTexture = null;
         RenderTexture renderTexture_history = null;
         public RawImage rawImage;
+        public Texture2D backgroundImage;
 
         public GameObject crossHead;
         Vector2Int resolution = new Vector2Int();
@@ -218,6 +219,14 @@ namespace Generation_6_1
             renderTexture_history.Create();
 
             rawImage.texture = renderTexture;
+
+            RenderTexture bgTexture = new RenderTexture(backgroundImage.width, backgroundImage.height, 32);
+            bgTexture.enableRandomWrite = true;
+            bgTexture.Create();
+            Graphics.Blit(backgroundImage, bgTexture);
+
+            visionShader.SetTexture(kernelID_normal, "backgroundImage", bgTexture);
+            visionShader.SetTexture(kernelID_rtx, "backgroundImage", bgTexture);
 
             //computeShader 변수 세팅
             visionShader.SetVector(CSPARAMS.RESOLUTION, (Vector2)resolution);

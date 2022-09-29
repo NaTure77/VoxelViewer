@@ -73,6 +73,7 @@ float viewport_height;
 float3 childDirection[8];
 CBUFFER_END
 RWTexture2D<float4> Result;
+RWTexture2D<float4> backgroundImage;
 RWStructuredBuffer<DataNode> octree;
 
 
@@ -99,8 +100,22 @@ bool DrawGrid2(float3 localPos, float scale, float dist, float thick)
     bool z = scale <= abs(localPos.z);
     return x && y || y && z || x && z;
 }
+
+float2 ConvertAngleToSkyPosition(float3 rd)
+{
+    rd = normalize(rd);
+    float y = (asin(rd.y) / 3.141592 + 0.5) *2048;// *180 / 3.141592 / 360) / 2 * 960;
+    
+        
+    //float y = (atan2(rd.y, rd.x) * 180 / 3.141592 / 360 + 0.5) / 2 * 1023;
+    float x = (atan2(rd.z, rd.x) / 3.141592 + 1) / 2 *4096;// *180 / 3.141592 / 360 ) / 2 * 1920;
+
+    return float2(x, y);
+}
+
 float3 get_skyColor(float3 rd)
 {
+    return pow(backgroundImage[ConvertAngleToSkyPosition(rd)].xyz,2);
     float t = 0.5 * (rd.y + 1);
     return (1.0 - t) * groundColor + t * skyColor;
 }
@@ -108,6 +123,7 @@ float3 GetChildPos(int idx, float3 parentPos, float scale)
 {
     return childDirection[idx] * scale * 0.25 + parentPos;
 }
+
 
 float3 VoxelTrav(inout ray_record rec)
 {
@@ -353,13 +369,21 @@ void handle_material(inout ray_record rec, float4 albedo, float3 rd, uint2 trace
     if ((lightEnabled) && tracedCnt.x == 0)
     {
         float3 lightDir = normalize(lightDirection + random_in_unit_sphere(seed) * 0.02);
-        if (!In_shadowField(rec.origin_first, lightDir))
+        /*if (!In_shadowField(rec.origin_first, lightDir))
         {
             rec.hit = false;
             float brightness = clamp(dot(rec.direction, lightDir), 0, 1) * lightIntensity;
             rec.albedo *= get_skyColor(rec.direction) + brightness * lightColor * 2;
         }
-        else firstHitAndShadow = tracedCnt.x == 0;
+        else firstHitAndShadow = tracedCnt.x == 0;*/
+        if (lightEnabled && !In_shadowField(rec.origin_first, lightDir))
+        {
+            //그림자 영역 아닐 경우 lightIntensity에 따라 확률적으로 다음 trace를 진행할지 결정.
+            rec.hit = (nextRandom(seed) + lightIntensity) < 1;//false;
+            float brightness = clamp(dot(rec.direction, lightDir), 0, 1);
+            rec.albedo *= lerp(1, get_skyColor(rec.direction) + brightness * lightColor, lightIntensity);
+        }
+        else firstHitAndShadow = true;
     }
 
     if (any(rec.origin < 0) || any(rec.origin >= MAP_SIZE))
@@ -527,7 +551,7 @@ void Kernel3(int3 id : SV_DispatchThreadID)
         //albedo = VoxelTrav(rec);
         VoxelTrav(rec);
         //normal_test
-        albedo = float3(0.5, 0.5, 0.5);
+        albedo = float3(0.5, 0.5, 0.5) * rec.hit;
         if (tracedCnt.x == 0)
         {
             rec.origin_first = rec.origin;

@@ -5081,6 +5081,7 @@ MonoBehaviour:
   temporalAA: {fileID: 7200000, guid: 6cf47e5f5c182a445957489acf4e6b62, type: 3}
   gridShader: {fileID: 7200000, guid: 835c084430b4553459187893a8c6f301, type: 3}
   rawImage: {fileID: 1728888322}
+  backgroundImage: {fileID: 2800000, guid: 6c074c05fc4f23e4e8ee9ffe865daf60, type: 3}
   crossHead: {fileID: 2039058410}
   mapScale: 8
   currentMapScale: 0
