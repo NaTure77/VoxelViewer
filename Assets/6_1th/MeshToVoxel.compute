@@ -2,19 +2,19 @@
 
 #include "/Includes/OctreeUtils.compute"
 #include "/Includes/MeshImporter.compute"
+#include "UnityCG.cginc"
 
 AppendStructuredBuffer<Voxel> voxels;
 //RWStructuredBuffer<VertUVs> vert_uvs;
 RWStructuredBuffer<float3> vertices;
 RWStructuredBuffer<float2> uvs;
 RWTexture2D<float4> _Texture;
-
 RWStructuredBuffer<int> triangles;
-int triangleCount;
-
 RWStructuredBuffer<uint> calcIndex;
-
 RWStructuredBuffer<int> finishedCount;
+
+CBUFFER_START(VoxelParams)
+int triangleCount;
 float2 textureSize;
 
 float density;
@@ -23,6 +23,7 @@ float3 coord;
 float4 currentMatColor;
 bool materialMode;
 bool noUV;
+CBUFFER_END
 
 float Get_TriangleSize(float3 a, float3 b, float3 c)
 {
@@ -93,21 +94,23 @@ void IntersectTriangle(int index_triangle)
         {
             Voxel voxel;
             voxel.position = uint2((x << 16) + y, z);
-            if (materialMode)
+            /*if (materialMode)
             {
                 voxel.color = ColorToInt(currentMatColor);
             }
-            else
+            else*/
             {
-                float abp = Get_TriangleSize(tri.a, tri.b, aabb.center);
+                /*float abp = Get_TriangleSize(tri.a, tri.b, aabb.center);
                 float bcp = Get_TriangleSize(tri.b, tri.c, aabb.center);
                 float acp = Get_TriangleSize(tri.a, tri.c, aabb.center);
                 float abc = abp + bcp + acp;
                 float2 uv_p = (uv_a * bcp + uv_b * acp + uv_c * abp) / abc;
                 int2 xy = int2((int)((textureSize.x - 1) * uv_p.x), (int)((textureSize.y - 1) * uv_p.y));
-
-                //voxel.color = ColorToInt(float4(normal, 1));//ColorToInt(_Texture[xy]);
-                voxel.color = ColorToInt(_Texture[xy]);
+                */
+                //normal_test
+                float3 normal = (normalize(cross(tri.b - tri.a, tri.c - tri.a)) + 1) * 0.5;
+                voxel.color = ColorToInt(float4(normal, 1));//ColorToInt(_Texture[xy]);
+                //voxel.color = ColorToInt(_Texture[xy]);
             }
             voxels.Append(voxel);
         }

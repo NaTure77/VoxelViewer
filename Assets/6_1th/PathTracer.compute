@@ -5,6 +5,8 @@ RWStructuredBuffer<uint> seeds;
 
 #include "/Includes/OctreeUtils.compute"
 #include "/Includes/Random.compute"
+#include "UnityCG.cginc"
+
 
 uint MAX_STEPS = 250;
 float MAP_SIZE = 1024;
@@ -33,7 +35,7 @@ struct DataNode
     uint subNodes[8];
 };
 
-int voxelLevel = 0;
+CBUFFER_START(Params)
 bool lightEnabled;
 bool gridEnabled;
 bool showOctree;
@@ -43,6 +45,8 @@ bool updated;
 bool rtxOn;
 
 bool focusing;
+
+int voxelLevel = 0;
 
 float3 lightColor;
 float3 lightDirection;
@@ -67,7 +71,7 @@ int materialType; //0: lambertian, 1: metal
 float viewport_height;
 
 float3 childDirection[8];
-
+CBUFFER_END
 RWTexture2D<float4> Result;
 RWStructuredBuffer<DataNode> octree;
 
@@ -200,9 +204,11 @@ float3 VoxelTrav(inout ray_record rec)
     }
 
     //get surface normal
-    anD[axisIdx] = direction[axisIdx];
-    //rec.direction = IntToColor(subNode) * 2 - 1;
-    rec.direction = -(float3)anD;//-normalize((float3)anD);
+    
+    //normal_test
+    rec.direction = (IntToColor(subNode) * 2 - 1).xyz;
+    //anD[axisIdx] = direction[axisIdx];
+    //rec.direction = -(float3)anD;//-normalize((float3)anD);
 
     if (rec.hit)
     {
@@ -309,7 +315,10 @@ void handle_material(inout ray_record rec, float4 albedo, float3 rd, uint2 trace
         return;
     }
     rec.albedo *= albedo.xyz;
-    rec.origin += rec.direction * 0.01;
+    
+    //normal_test
+    rec.origin += rec.direction;
+    //rec.origin += rec.direction * 0.01;
     /************light************/
    /* if (albedo.a == 0.4f && !gridHit)
     {
@@ -379,28 +388,26 @@ float3 rotate(float3 p, float3 a)
 [numthreads(8, 8, 1)]
 void Kernel2(int3 id : SV_DispatchThreadID)
 {
-    int idx1D = id.y * resolution.x + id.x;
-    
     float3 ro;
     float3 rd;
+
+    float2 uv = 0;
     if (updated)
     {
-        float2 uv = (id.xy / resolution) - 0.5;
-        ro = _Position;
-        rd = rotate(normalize(float3(uv.x * resolution.x / resolution.y, uv.y, 1 / viewport_height)), _Rotation);
+        uv = (id.xy / (resolution - 1)) - 0.5;
     }
     else
     {
-        float3 rot_f = rotate(float3(0, 0, 1), _Rotation);
-        float3 rot_v = rotate(float3(0, 1, 0), _Rotation);
-        float3 u = normalize(cross(rot_v, rot_f));
-        float3 v = normalize(cross(rot_f, u));
-        float3 horizontal = u * (resolution.x / resolution.y) * viewport_height;
-        float3 vertical =  v * viewport_height;
-        float2 uv = ((id.xy + randomVector - 0.5) / (resolution)) - 0.5;
-        ro = _Position;
-        rd = normalize(uv.x * horizontal + uv.y * vertical + rot_f);
+        uv = ((id.xy + randomVector - 0.5) / (resolution - 1)) -0.5;
     }
+
+    //Result[id.xy] = float4(uv.x, uv.y, 0, 1);
+    //return;
+    ro = _Position;
+    rd = rotate(normalize(float3(uv.x * resolution.x / resolution.y, uv.y, 1 / viewport_height)), _Rotation);
+    //Result[id.xy] = float4(rd, 1);
+    //return;
+
     float4 result;
     ray_record rec;
     rec.origin = -1;
@@ -452,6 +459,8 @@ void Kernel2(int3 id : SV_DispatchThreadID)
     }
     result = float4(sqrt(rec.albedo), 1);
     rec.origin_first = rec.origin;
+
+    int idx1D = id.y * resolution.x + id.x;
     rec.direction_first = rec.direction;
     recs[idx1D] = rec;
     Result[id.xy] = result;
@@ -515,8 +524,10 @@ void Kernel3(int3 id : SV_DispatchThreadID)
     else
     {
         direction_bef = rec.direction;
-        albedo = VoxelTrav(rec);
-
+        //albedo = VoxelTrav(rec);
+        VoxelTrav(rec);
+        //normal_test
+        albedo = float3(0.5, 0.5, 0.5);
         if (tracedCnt.x == 0)
         {
             rec.origin_first = rec.origin;

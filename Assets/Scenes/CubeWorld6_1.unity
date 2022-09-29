@@ -2246,7 +2246,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &514766562
 RectTransform:
   m_ObjectHideFlags: 0
@@ -4580,7 +4580,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &1105933935
 RectTransform:
   m_ObjectHideFlags: 0
@@ -5128,7 +5128,6 @@ MonoBehaviour:
   stateIndicator: {fileID: 1995545303}
   voxelConverter: {fileID: 7200000, guid: 1dfb59366bee5dd49a6be96f6ad2cf0f, type: 3}
   texture: {fileID: 0}
-  test: {fileID: 2800000, guid: 3f4b3bc9f7dfda94db9a755b009f8bb5, type: 3}
   rawImage: {fileID: 344411834}
 --- !u!1 &1169085830
 GameObject:

@@ -136,6 +136,7 @@ namespace Generation_6_1
                     t.Create();
                     voxelConverter.SetTexture(kernel_id1, "_Texture", t);
                 }
+                hasTexture = false;
             }
             else
             {
@@ -190,12 +191,12 @@ namespace Generation_6_1
             voxelConverter.SetVector("coord", coord);
 
             if (_loadCoroutine != null) Controller.instance.StopCoroutine(_loadCoroutine);
-            _loadCoroutine = Voxelize(data.meshDatas,data.materialDatas,mapScale, callback);
+            _loadCoroutine = Voxelize(data.meshDatas,data.materialDatas,mapScale, callback, hasTexture);
 
             StartCoroutine(_loadCoroutine);
         }
         IEnumerator _loadCoroutine;
-        IEnumerator Voxelize(List<MeshData> meshDatas, List<MaterialData> materialDatas, int mapScale, UnityAction<Voxel[], int> callback)
+        IEnumerator Voxelize(List<MeshData> meshDatas, List<MaterialData> materialDatas, int mapScale, UnityAction<Voxel[], int> callback, bool hasTexture)
         {
             ComputeBuffer trianglesBuffer;
             ComputeBuffer verticesBuffer;
@@ -209,6 +210,11 @@ namespace Generation_6_1
 
             int currentTextureIndex = -1;
 
+            if (hasTexture)
+            {
+                DrawTexture(materialDatas[0].texture);
+                Debug.Log("Has Texture");
+            }
             Debug.Log("material num: " + materialDatas.Count);
             for (int i = 0; i < meshDatas.Count; i++)
             {
@@ -246,10 +252,15 @@ namespace Generation_6_1
                 MaterialData materialData = materialDatas[meshDatas[i].materialIndex];
                 voxelConverter.SetBool("materialMode", !materialData.HasTextureDiffuse);
                 voxelConverter.SetVector("currentMatColor", new Vector4(materialData.color.r, materialData.color.g, materialData.color.b, materialData.color.a));
-                if (materialData.HasTextureDiffuse && currentTextureIndex != meshDatas[i].materialIndex)
+                
+                
+                
+
+                if (!hasTexture && materialData.HasTextureDiffuse && currentTextureIndex != meshDatas[i].materialIndex)
                 {
                     currentTextureIndex = meshDatas[i].materialIndex;
                     DrawTexture(materialData.texture);
+                    Debug.Log("dont have texture");
                     voxelConverter.SetVector("textureSize", new Vector2(materialData.texture.width, materialData.texture.height));
                 }
 

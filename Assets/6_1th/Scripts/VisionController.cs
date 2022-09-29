@@ -271,7 +271,8 @@ namespace Generation_6_1
                 
                 visionShader.Dispatch(kernelID_normal,
                     Mathf.CeilToInt(1.0f * resolution.x / CSPARAMS.THREAD_NUMBER_X),
-                    Mathf.CeilToInt(1.0f * resolution.y / CSPARAMS.THREAD_NUMBER_Y), 1);
+                    Mathf.CeilToInt(1.0f * resolution.y / CSPARAMS.THREAD_NUMBER_Y), 
+                    1);
 
                 gridShader.Dispatch(KernelID_grid,
                     Mathf.CeilToInt(1.0f * resolution.x / CSPARAMS.THREAD_NUMBER_X),

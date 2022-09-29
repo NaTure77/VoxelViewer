@@ -36,7 +36,7 @@ namespace Generation_6_1
 
             OptionUI.instance.SetMapScale(VisionController.instance.currentMapScale);
 
-            menuEnabled = true;
+            menuEnabled = false;
             OptionUI.instance.ActivateUI(menuEnabled);
 
             StartCoroutine(Loop());
