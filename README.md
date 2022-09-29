@@ -6,11 +6,12 @@
  [![VoxelViewer Video](http://img.youtube.com/vi/tYihHdRt0lQ/0.jpg)](https://youtu.be/tYihHdRt0lQ)
  
  ## How to use
+ * **Click the ESC key to enable the control panel..**
  - #### Importing Model
     ![image](https://user-images.githubusercontent.com/18459135/193059904-f16b9e5e-bdb2-44d0-b5ef-dda116af4a06.png)
-    1) Select Model file 
-    2) Adjust Map size (64^3 ~ 4096^3)
-    3) Click Load Button (It may takes some times)
+    1) Select the Model file 
+    2) Adjust the Map size (64^3 ~ 4096^3)
+    3) Click the Load Button (It may takes some times)
 
  - #### Render Option
     ![image](https://user-images.githubusercontent.com/18459135/193056942-4d8459d3-3cc0-4cc4-8bf5-732d44f5281c.png)
