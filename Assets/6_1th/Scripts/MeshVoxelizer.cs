@@ -98,7 +98,7 @@ namespace Generation_6_1
                 data = MeshImporter.LoadMeshData(modelPath);
             });
 
-            if (!hasTexture)
+            /*if (!hasTexture)
             {
                 for(int i = 0; i < data.materialDatas.Count; i++)
                 {
@@ -145,7 +145,7 @@ namespace Generation_6_1
                     data.materialDatas[i].texture = texture_imported;
                     data.materialDatas[i].HasTextureDiffuse = true;
                 }
-            }
+            }*/
 
             stateIndicator.text = "Calculating Vertices for resizing";
             await Task.Run(() =>
@@ -256,13 +256,13 @@ namespace Generation_6_1
                 
                 
 
-                if (!hasTexture && materialData.HasTextureDiffuse && currentTextureIndex != meshDatas[i].materialIndex)
+               /* if (!hasTexture && materialData.HasTextureDiffuse && currentTextureIndex != meshDatas[i].materialIndex)
                 {
                     currentTextureIndex = meshDatas[i].materialIndex;
                     DrawTexture(materialData.texture);
                     Debug.Log("dont have texture");
                     voxelConverter.SetVector("textureSize", new Vector2(materialData.texture.width, materialData.texture.height));
-                }
+                }*/
 
                 //Set VoxelCounters
                 finishedCountBuffer = new ComputeBuffer(1, sizeof(int));

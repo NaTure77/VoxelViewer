@@ -44,7 +44,8 @@ namespace Generation_6_1
             float cos = Mathf.Cos(-rot_temp.y * PI);
             pos += new Vector3(d.x * cos - d.z * sin, d.y, d.x * sin + d.z * cos);
             pos_temp = Vector3.Lerp(pos_temp, pos, 0.3f);
-            return (VisionController.instance.rtxOn ? pos : pos_temp);
+            return pos_temp;
+            //return (VisionController.instance.rtxOn ? pos : pos_temp);
         }
 
         public Vector3 Rotate(Vector2 delta)
@@ -53,7 +54,9 @@ namespace Generation_6_1
             rot.y = rot.y + delta.x * rot_sensitivity.x;
 
             rot_temp = Vector3.Lerp(rot_temp, rot, 0.3f);
-            return VisionController.instance.rtxOn ? rot : rot_temp;
+
+            return rot_temp;
+          //  return VisionController.instance.rtxOn ? rot : rot_temp;
         }
     }
 }

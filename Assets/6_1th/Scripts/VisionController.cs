@@ -31,6 +31,8 @@ namespace Generation_6_1
         int KernelID_taa;
         int KernelID_grid;
         int KernelID_focus;
+        int kernelID_vision_reproj;
+        int kernelID_GetHitPoints;
 
         public bool lightEnabled = false;
         public bool gridEnabled = false;
@@ -79,6 +81,9 @@ namespace Generation_6_1
             seeds?.Release();
             focusPosBuffer?.Release();
             octreeManager.ReleaseBuffers();
+
+            reprojection?.Release();
+            hitPoints?.Release();
         }
 
         public void SetOctreeBuffer(ComputeBuffer octreeBuffer)
@@ -95,6 +100,9 @@ namespace Generation_6_1
             KernelID_taa = temporalAA.FindKernel("CSMain");
             KernelID_grid = gridShader.FindKernel(CSPARAMS.KERNELID);
             KernelID_focus = visionShader.FindKernel("Focus");
+            kernelID_vision_reproj = visionShader.FindKernel("Reprojection");
+            kernelID_GetHitPoints = visionShader.FindKernel("GetHitPoints");
+
 
             visionShader.SetInt(CSPARAMS.VOXELLVL, VoxelLevel);
             visionShader.SetFloat(CSPARAMS.MAX_STEPS, 700);
@@ -169,17 +177,20 @@ namespace Generation_6_1
         ComputeBuffer colorSum;
         ComputeBuffer traced_cnt;
         ComputeBuffer seeds;
+        ComputeBuffer reprojection;
+        ComputeBuffer hitPoints;
         public void Init2()
         {
             recs?.Release();
             colorSum?.Release();
             traced_cnt?.Release();
             seeds?.Release();
-
+            
             recs = new ComputeBuffer(resolution.x * resolution.y, sizeof(float) * 17);
             colorSum = new ComputeBuffer(resolution.x * resolution.y, sizeof(float) * 3);
             traced_cnt = new ComputeBuffer(resolution.x * resolution.y, sizeof(int) * 2);
             seeds = new ComputeBuffer(resolution.x * resolution.y, sizeof(int));
+            
 
             uint[] s = new uint[resolution.x * resolution.y];
             System.Random rand = new System.Random();
@@ -197,8 +208,25 @@ namespace Generation_6_1
             visionShader.SetVector("skyColor", skyColor);
             visionShader.SetVector("groundColor", groundColor);
 
+
+            hitPoints?.Release();
+            reprojection?.Release();
+            reprojection = new ComputeBuffer(resolution.x * resolution.y, sizeof(float) * 4);
+            hitPoints = new ComputeBuffer(resolution.x * resolution.y, sizeof(float) * 6);
+
+            visionShader.SetBuffer(kernelID_rtx, "Result_bef", reprojection);
+            visionShader.SetBuffer(kernelID_vision_reproj, "Result_bef", reprojection);
+            visionShader.SetBuffer(kernelID_vision_reproj, "color_sum", colorSum);
+            visionShader.SetBuffer(kernelID_vision_reproj, "traced_cnt", traced_cnt);
+            visionShader.SetBuffer(kernelID_GetHitPoints, "recs", recs);
+            visionShader.SetBuffer(kernelID_rtx, "hitPoints", hitPoints);
+            visionShader.SetBuffer(kernelID_GetHitPoints, "hitPoints", hitPoints);
+
+
             gridShader.SetBuffer(KernelID_grid, "recs", recs);
         }
+
+        
         public void Refresh()
         {
             //해상도 설정
@@ -241,11 +269,15 @@ namespace Generation_6_1
             gridShader.SetVector(CSPARAMS.RESOLUTION, (Vector2)resolution);
             gridShader.SetTexture(KernelID_grid, CSPARAMS.RESULT, renderTexture);
 
+
+            visionShader.SetTexture(kernelID_vision_reproj, CSPARAMS.RESULT, renderTexture);
             Init2();
             updated = true;
         }
 
         Vector3 pos_absolute;
+
+        public bool b = true;
         public void DispatchComputeShader(Vector3 position, Vector3 rotation)
         {
             float pos_delta = (pos - position).magnitude;
@@ -271,6 +303,7 @@ namespace Generation_6_1
                 octreeManager.Dispatch_Update();
             }*/
 
+            
 
             visionShader.SetBool("updated", updated);
             if (!rtxOn)
@@ -306,10 +339,27 @@ namespace Generation_6_1
                 {
                     updated = false;
                     visionShader.SetBool("updated", updated);
-                    visionShader.Dispatch(kernelID_rtx,
-                        Mathf.CeilToInt(1.0f * resolution.x / 8),
-                        Mathf.CeilToInt(1.0f * resolution.y / 8), 1);
+                    //visionShader.Dispatch(kernelID_rtx,
+                    //    Mathf.CeilToInt(1.0f * resolution.x / 8),
+                    //    Mathf.CeilToInt(1.0f * resolution.y / 8), 1);
                 }
+
+                if(b)
+                {
+                    //b = false;
+                    visionShader.Dispatch(kernelID_GetHitPoints,
+                  Mathf.CeilToInt(1.0f * resolution.x / 8),
+                  Mathf.CeilToInt(1.0f * resolution.y / 8), 1);
+
+                    visionShader.Dispatch(kernelID_vision_reproj,
+                       Mathf.CeilToInt(1.0f * resolution.x / 8),
+                       Mathf.CeilToInt(1.0f * resolution.y / 8), 1);
+
+                    visionShader.SetVector("_Rotation_before", rot);
+                    visionShader.SetVector("_Position_before", pos_absolute);
+                }
+               
+
                 temporalAA.Dispatch(KernelID_taa,
                     Mathf.CeilToInt(1.0f * resolution.x / 8),
                     Mathf.CeilToInt(1.0f * resolution.y / 8), 1);

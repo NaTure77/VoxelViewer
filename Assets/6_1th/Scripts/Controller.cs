@@ -40,6 +40,8 @@ namespace Generation_6_1
             OptionUI.instance.ActivateUI(menuEnabled);
 
             StartCoroutine(Loop());
+
+           // Debug.Log(Resources.FindObjectsOfTypeAll().Length);
         }
 
         IEnumerator Loop()
@@ -97,6 +99,14 @@ namespace Generation_6_1
                 {
                     rtxOn = !rtxOn;
                     VisionController.instance.ShowRtx(rtxOn);
+                }
+            };
+
+            inputManager.Player.Number1.performed += val =>
+            {
+                if (val.ReadValue<float>() > 0)
+                {
+                    VisionController.instance.b = true;
                 }
             };
         }

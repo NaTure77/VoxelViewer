@@ -1,5 +1,7 @@
 ﻿#pragma kernel Kernel2
 #pragma kernel Kernel3
+#pragma kernel Reprojection
+#pragma kernel GetHitPoints
 #pragma kernel Focus
 RWStructuredBuffer<uint> seeds;
 
@@ -30,6 +32,12 @@ struct trav_data
     uint octreeIdx;
 };
 
+struct hitPointInfo
+{
+    float3 position;
+    float3 normal;
+};
+
 struct DataNode
 {
     uint subNodes[8];
@@ -54,6 +62,8 @@ float lightIntensity;
 
 float3 _Position;
 float3 _Rotation;
+float3 _Position_before;
+float3 _Rotation_before;
 float2 resolution;
 float2 screenCenter;
 
@@ -71,16 +81,23 @@ int materialType; //0: lambertian, 1: metal
 float viewport_height;
 
 float3 childDirection[8];
+
+bool temporalRep;
 CBUFFER_END
 RWTexture2D<float4> Result;
 RWTexture2D<float4> backgroundImage;
-RWStructuredBuffer<DataNode> octree;
+StructuredBuffer<DataNode> octree;
 
 
 RWStructuredBuffer<ray_record> recs;
 RWStructuredBuffer<float3> color_sum;
 RWStructuredBuffer<uint2> traced_cnt;
 RWStructuredBuffer<float3> focus_pos;
+
+
+RWStructuredBuffer<hitPointInfo> hitPoints;
+RWStructuredBuffer<float4> Result_bef;
+
 
 bool DrawGrid(float3 localPos, float scale, float thick)
 {
@@ -306,8 +323,8 @@ void handle_material(inout ray_record rec, float4 albedo, float3 rd, uint2 trace
 {
     if (gridEnabled && rec.hit)
     {
-        float dist = length(rec.origin - _Position);
-        float ratio = clamp((1 - dist * 3 / (MAP_SIZE)), 0, 1);
+       // float dist = length(rec.origin - _Position);
+        //float ratio = clamp((1 - dist * 3 / (MAP_SIZE)), 0, 1);
         float3 localPos = rec.origin - floor(rec.origin - rec.direction * 0.01) - 0.5;
         int scale = pow(2, voxelLevel);
         albedo.xyz += (1 - albedo.xyz * 2) * 1 * DrawGrid(localPos, 1, 0.02);
@@ -464,7 +481,7 @@ void Kernel2(int3 id : SV_DispatchThreadID)
             rec.albedo = color + Draw_Sun_fake(rd);
 
             int halfMapSize = MAP_SIZE * 0.5;
-            gridHit = DrawGrid2(rec.origin % halfMapSize - halfMapSize * 0.5, halfMapSize, length(rec.origin - _Position), 0.003);
+            gridHit = DrawGrid2(rec.origin % halfMapSize - halfMapSize * 0.5, halfMapSize, length(rec.origin - _Position), 0.003) * gridEnabled;
 
             rec.albedo += (1 - rec.albedo * 2) * 1 * gridHit * abs(dot(normalize(_Position - rec.origin), rec.direction));
         }
@@ -503,7 +520,7 @@ void Init_rec(int3 id, inout uint seed, inout ray_record rec)
     float3 vertical = f_dist * v;
     float2 rrd = lens_radius * random_in_unit_disk2(seed);
     float3 offs = rrd.x * u + rrd.y * v;
-    float2 uv = ((id.xy + float2(nextRandom(seed), nextRandom(seed)) - 0.5) / (resolution - 1)) - 0.5;
+    float2 uv = ((id.xy /*+ float2(nextRandom(seed), nextRandom(seed)) - 0.5*/) / (resolution)) - 0.5;
     float3 ro = _Position + offs;
     float3 rd = normalize(uv.x * horizontal + uv.y * vertical + f_dist / viewport_height * rot_f - offs);
 
@@ -513,13 +530,161 @@ void Init_rec(int3 id, inout uint seed, inout ray_record rec)
     rec.hit = false;
     rec.hitLight = false;
 }
+
+float3 rotate_inv(float3 p, float3 a)
+{
+    float sx, cx, sy, cy;
+    sincos(a.x, sx, cx);
+    sincos(-a.y, sy, cy);
+    p = float3(p.x * cy - p.z * sy, p.y, p.x * sy + p.z * cy);
+    p = float3(p.x, p.y * cx - p.z * sx, p.y * sx + p.z * cx);
+    return p;
+}
+
+float4 TemporalReproj_new(float3 hitPoint, float3 hitNormal, float4 color_new)
+{
+    float3 rd = hitPoint - _Position_before;
+    float3 camCoordPos = rotate_inv(rd, -_Rotation_before);
+
+    float dist = (resolution.y) / viewport_height;
+
+    float3 proj = camCoordPos * dist / camCoordPos.z;
+
+    proj.xy += (resolution.xy) * 0.5;
+
+    if (camCoordPos.z < 0 || any(proj.xy <= -1) || any(proj.xy >= resolution.xy)) return float4(1, 0, 0, 0);// color_new;
+
+    //float2 pos = clamp(round(proj.xy), 0, resolution.xy - 1);
+    //float p = pos.y * resolution.x + pos.x;
+    //if (length(hitPoints[p] - hitPoint) > 2) return 0;
+
+    //return float4(proj.x / 1920, proj.y / 1080, 1, 1);
+    //proj.xy = round(proj.xy + randomVector - 0.5);
+   // proj.xy += random_in_unit_disk2(seed) * 0.5;
+
+    float2 pos_min = clamp(floor(proj.xy), 0, resolution.xy - 1);
+    float2 pos_max = clamp(ceil(proj.xy), 0, resolution.xy - 1);
+
+    float lb = pos_min.y * resolution.x + pos_min.x;
+    float lt = pos_max.y * resolution.x + pos_min.x;
+
+    float rb = pos_min.y * resolution.x + pos_max.x;
+    float rt = pos_max.y * resolution.x + pos_max.x;
+
+
+    /*float2 r = clamp(round(proj.xy), 0, resolution.xy - 1);
+    float lr = r.y * resolution.x + r.x;
+    hitPointInfo lrh = hitPoints[lr];
+    float lrl = length(lrh.position - hitPoint);
+    float4 lrc = Result_bef[lr];*/
+    float4 result = 0;
+    // if (lrl > 1 || (dot(hitNormal, lrh.normal) <= 0 && lrl > 0.007))
+    {
+        float4 lbc, ltc, rbc, rtc;
+        lbc = Result_bef[lb];
+        ltc = Result_bef[lt];
+        rbc = Result_bef[rb];
+        rtc = Result_bef[rt];
+        //block 위치 비교 & hitpoint 거리 비교
+
+        hitPointInfo lbh = hitPoints[lb];
+        hitPointInfo lth = hitPoints[lt];
+        hitPointInfo rbh = hitPoints[rb];
+        hitPointInfo rth = hitPoints[rt];
+
+        /*float lbl = length(lbh.position - hitPoint);
+        float ltl = length(lth.position - hitPoint);
+        float rbl = length(rbh.position - hitPoint);
+        float rtl = length(rth.position - hitPoint);*/
+
+
+
+        float3 lbrd = lbh.position - _Position_before;
+        float3 ltrd = lth.position - _Position_before;
+        float3 rbrd = rbh.position - _Position_before;
+        float3 rtrd = rth.position - _Position_before;
+
+        float hitLen = length(rd);
+
+        float lbl = abs(length(lbrd) - hitLen);
+        float ltl = abs(length(ltrd) - hitLen);
+        float rbl = abs(length(rbrd) - hitLen);
+        float rtl = abs(length(rtrd) - hitLen);
+
+
+        rd = normalize(rd);
+        lbrd = normalize(lbrd);
+        ltrd = normalize(ltrd);
+        rbrd = normalize(rbrd);
+        rtrd = normalize(rtrd);
+
+
+        int cnt = 0;
+
+        if (lbl > 10) lbc = color_new;
+        if (ltl > 10) ltc = color_new;
+        if (rbl > 10) rbc = color_new;
+        if (rtl > 10) rtc = color_new;
+        //if ((dot(rd, lbrd) < 0.9 || (dot(hitNormal, lbh.normal) < 0.5) || lbl > 2))
+        //{
+        //    //result += lbc;
+        //    lbc = color_new;
+        //    // cnt++;
+        //}
+        //if ((dot(rd, ltrd) < 0.9 || (dot(hitNormal, lth.normal) < 0.5) || ltl > 2))
+        //{
+        //    //result += ltc;
+        //    ltc = color_new;
+        //    // cnt++;
+        //}
+        //if ((dot(rd, rbrd) < 0.9 || (dot(hitNormal, rbh.normal) < 0.5) || rbl > 2))
+        //{
+        //    // result += rbc;
+        //    rbc = color_new;
+        //    //cnt++;
+        //}
+        //if ((dot(rd, rtrd) < 0.9 || (dot(hitNormal, rth.normal) < 0.5) || rtl > 2))
+        //{
+        //    // result += rtc;
+        //    rtc = color_new;
+        //    // cnt++;
+        //}
+        /* if (cnt == 0)
+         {
+             result = color_new;
+         }
+         else result /= cnt;*/
+         //else
+        {
+            float4 left = lerp(lbc, ltc, proj.y - pos_min.y);
+
+            float4 right = lerp(rbc, rtc, proj.y - pos_min.y);
+
+            result = lerp(left, right, proj.x - pos_min.x);
+            //result.w = 1;
+        }
+
+    }
+
+    //else
+    {
+        //lrc = color_new;
+        // result = lrc;
+    }
+
+
+
+    //(length(hitPoints[lr] - hitPoint) > 1) ? color_new : Result_bef[lr];
+    return result;
+
+}
 [numthreads(8, 8, 1)]
 void Kernel3(int3 id : SV_DispatchThreadID)
 {
     int idx1D = id.y * resolution.x + id.x;
     ray_record rec = recs[idx1D];
-    uint2 tracedCnt = 0; 
-    float3 colorSum = 0; 
+    uint2 tracedCnt = 0;
+    float3 colorSum = 0;
     uint seed = seeds[idx1D];
 
     float3 albedo = 0;
@@ -528,6 +693,7 @@ void Kernel3(int3 id : SV_DispatchThreadID)
     float3 direction_bef = 0;
 
     bool intersected = true;
+    bool hit_first = true;
     if (!updated)
     {
         colorSum = color_sum[idx1D];
@@ -535,9 +701,10 @@ void Kernel3(int3 id : SV_DispatchThreadID)
     }
     if (tracedCnt.x == 0)
     {
-        if (tracedCnt.y == 0)
-            seed = uint(uint(id.x) * uint(1973) + uint(id.y) * uint(9277)) | uint(1);
+        //if (tracedCnt.y == 0)
+        //    seed = uint(uint(id.x) * uint(1973) + uint(id.y) * uint(9277)) | uint(1);
         Init_rec(id, seed, rec);
+        hit_first = false;
         intersected = ray_box_intersection(rec.origin, rec.direction);
     }
     if (!intersected)
@@ -551,18 +718,37 @@ void Kernel3(int3 id : SV_DispatchThreadID)
         //albedo = VoxelTrav(rec);
         VoxelTrav(rec);
         //normal_test
-        albedo = float3(0.5, 0.5, 0.5) * rec.hit;
+        albedo = 0.9 * rec.hit;
         if (tracedCnt.x == 0)
         {
             rec.origin_first = rec.origin;
             rec.direction_first = rec.direction;
+            hit_first = rec.hit;
+            if (rec.hit)
+            {
+                handle_material(rec, float4(albedo, 0), direction_bef, tracedCnt, seed);
+
+                //가장자리 voxel이 검게 변하는 이슈 처리하기 위해 분기
+                if (rec.hit)
+                {
+                    tracedCnt.x++;
+                    direction_bef = rec.direction;
+                    VoxelTrav(rec);
+                    albedo = 0.9 * rec.hit;
+                    handle_material(rec, float4(albedo, 0), direction_bef, tracedCnt, seed);
+                }
+                
+            }
+            else
+                handle_material(rec, float4(albedo, 0), direction_bef, tracedCnt, seed);
         }
-        handle_material(rec, float4(albedo, 0), direction_bef, tracedCnt, seed);
+        else
+            handle_material(rec, float4(albedo, 0), direction_bef, tracedCnt, seed);
     }
     tracedCnt.x++;
 
     //hit 된 것이 없거나 깊이50을 넘어가거나 범위를 넘어갔을 경우.
-    if (!rec.hit || tracedCnt.x > 2)
+    if (!rec.hit || tracedCnt.x > 10)
     {
         tracedCnt.x = 0;
         tracedCnt.y += 1;
@@ -572,18 +758,65 @@ void Kernel3(int3 id : SV_DispatchThreadID)
         }
 
         colorSum += clamp(rec.albedo, 0, 1) * !rec.hit;
-        rec.albedo = 1;
+        //rec.albedo = 1;
     }
+    //if (/*temporalRep &&*/ updated)
+    {
+        float4 res = tracedCnt.y > 0 ? float4((colorSum / tracedCnt.y), 1): float4(colorSum, 1);
+        float4 temp = TemporalReproj_new(rec.origin_first, rec.direction_first, sqrt(res));
 
+        // background
+        if (!hit_first || temp.a == 0)
+        {
+
+            result = sqrt(res);
+
+            //colorSum = temp.xyz;// clamp(lerp(res.xyz, temp.xyz, 0.9), 0, 1);
+        }
+        else 
+            if (tracedCnt.y > 0) result = lerp(sqrt(res), temp, 0.95);//temp;// sqrt(temp);
+        //else if (tracedCnt.y < 10) result =  lerp(sqrt(res), temp, 0.9);
+        //else if (tracedCnt.y < 30) result =  lerp(sqrt(res), temp, 0.8);
+        else result =  lerp(sqrt(res), temp, 0.9);
+    }
     // accumulated results
-    if (tracedCnt.y > 0)
-        result = float4(sqrt(colorSum / tracedCnt.y), 1);
-
+    /*else
+    {
+        if (tracedCnt.y > 0)
+            result = float4(sqrt(colorSum / tracedCnt.y), 1);
+    }*/
+   
+    
     recs[idx1D] = rec;
     traced_cnt[idx1D] = tracedCnt;
     color_sum[idx1D] = colorSum;
     seeds[idx1D] = seed;
     Result[id.xy] = result;
+}
+
+[numthreads(8, 8, 1)]
+void Reprojection(int3 id : SV_DispatchThreadID)
+{
+    int idx1D = resolution.x * id.y + id.x;
+
+    uint cnt = traced_cnt[idx1D].y;
+    Result_bef[idx1D] = Result[id.xy];
+   /* if(cnt == 0)
+        Result_bef[idx1D] = float4(color_sum[idx1D], 1);
+    else
+        Result_bef[idx1D] = float4(color_sum[idx1D] / cnt, 1);*/
+}
+
+[numthreads(8, 8, 1)]
+void GetHitPoints(int3 id : SV_DispatchThreadID)
+{
+    int idx1D = resolution.x * id.y + id.x;
+    ray_record rec = recs[idx1D];
+
+    hitPointInfo hit;
+    hit.position = rec.origin_first;
+    hit.normal = rec.direction_first;
+    hitPoints[idx1D] = hit;
 }
 
 

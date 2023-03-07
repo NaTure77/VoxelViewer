@@ -27,10 +27,10 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 
         if (!updated)
         {
-            currentColor = lerp(currentColor, historyColor, 0.9);
+            currentColor = lerp(currentColor, historyColor, 0.99);
             current[id.xy] = float4(currentColor, 1);
         }
-        else currentColor = lerp(currentColor, historyColor, 0.3);
+        else currentColor = lerp(currentColor, historyColor, 0.5);
     }
     history[id.xy] = float4(currentColor,1);
 }
